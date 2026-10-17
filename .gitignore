@@ -33,3 +33,9 @@ Thumbs.db
 
 # Local lint output
 ruff-result.txt
+
+# Test and coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+integration_test_recovery.txt

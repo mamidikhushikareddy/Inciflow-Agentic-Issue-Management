@@ -1,4 +1,5 @@
-﻿"""Application configuration loaded from environment variables."""
+
+"""Application configuration loaded from environment variables."""
 
 import os
 from dataclasses import dataclass
@@ -19,6 +20,11 @@ class Settings:
     database_name: str
     database_user: str
     database_password: str
+    github_token: str | None = None
+    github_owner: str | None = None
+    github_repository: str | None = None
+    github_sync_overlap_seconds: int = 120
+    inciflow_sync_trigger_secret: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -46,6 +52,20 @@ class Settings:
         if not 1 <= port <= 65535:
             raise RuntimeError("DATABASE_PORT must be between 1 and 65535.")
 
+        try:
+            overlap_seconds = int(
+                os.getenv("GITHUB_SYNC_OVERLAP_SECONDS", "120")
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                "GITHUB_SYNC_OVERLAP_SECONDS must be an integer."
+            ) from exc
+
+        if overlap_seconds < 0:
+            raise RuntimeError(
+                "GITHUB_SYNC_OVERLAP_SECONDS must be non-negative."
+            )
+
         return cls(
             app_env=os.getenv("APP_ENV", "development"),
             database_host=os.environ["DATABASE_HOST"],
@@ -53,6 +73,13 @@ class Settings:
             database_name=os.environ["DATABASE_NAME"],
             database_user=os.environ["DATABASE_USER"],
             database_password=os.environ["DATABASE_PASSWORD"],
+            github_token=os.getenv("GITHUB_TOKEN") or None,
+            github_owner=os.getenv("GITHUB_OWNER") or None,
+            github_repository=os.getenv("GITHUB_REPOSITORY") or None,
+            github_sync_overlap_seconds=overlap_seconds,
+            inciflow_sync_trigger_secret=(
+    os.getenv("INCIFLOW_SYNC_TRIGGER_SECRET") or None
+),
         )
 
     @property

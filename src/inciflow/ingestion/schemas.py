@@ -1,7 +1,7 @@
 ﻿"""Validated contracts for GitHub ingestion."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -73,3 +73,17 @@ class IngestionResponse(BaseModel):
     repository_id: __import__("uuid").UUID
     issue_count: int = Field(ge=0)
     synced_at: datetime
+
+
+
+class GitHubIssueBatch(BaseModel):
+    """One bounded batch of issues and its checkpoint transition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    repository: RepositoryIngest
+    issues: list[IssueIngest] = Field(max_length=500)
+    expected_cursor_payload: dict[str, Any]
+    cursor_payload: dict[str, Any]
+    completed: bool
+    watermark: datetime | None = None
