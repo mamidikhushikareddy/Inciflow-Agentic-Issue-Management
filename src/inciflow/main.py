@@ -1,12 +1,29 @@
 ﻿"""FastAPI application entry point."""
 
-from fastapi import Depends, FastAPI, HTTPException, status
+import hmac
+from datetime import UTC, datetime
+import logging
+
+from inciflow.persistence.repositories.repositories import (
+    get_repository_by_full_name,
+)
+from inciflow.persistence.repositories.integration_syncs import (
+    mark_github_repository_sync_failed,
+)
+
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from inciflow.ingestion.schemas import IngestionResponse, SnapshotIngest
 from inciflow.ingestion.service import ingest_repository_snapshot
-from inciflow.persistence.database import get_db_session
+from inciflow.persistence.database import get_db_session, get_session_factory
+from inciflow.core.config import settings
+from inciflow.integrations.github import GitHubAPIError, GitHubClient
+from inciflow.ingestion.github_sync import sync_updated_github_issues
+from inciflow.ingestion.sync_service import StaleCheckpointError
+from sqlalchemy.exc import SQLAlchemyError
+
 
 app = FastAPI(
     title="Inciflow API",
@@ -64,3 +81,118 @@ def ingest_snapshot(
         issue_count=result.issue_count,
         synced_at=result.synced_at,
     )
+
+
+@app.post("/api/v1/integrations/github/sync", tags=["integrations"])
+def trigger_github_sync(
+    x_inciflow_sync_secret: str | None = Header(default=None),
+) -> dict[str, object]:
+    """Trigger one authenticated incremental GitHub synchronization."""
+    expected_secret = settings.inciflow_sync_trigger_secret
+
+    if (
+        not expected_secret
+        or not x_inciflow_sync_secret
+        or not hmac.compare_digest(x_inciflow_sync_secret, expected_secret)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing sync credentials.",
+        )
+
+    if (
+        not settings.github_token
+        or not settings.github_owner
+        or not settings.github_repository
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub synchronization is not configured.",
+        )
+
+    started_at = datetime.now(UTC)
+    session = None
+
+    try:
+        session = get_session_factory()()
+
+        with GitHubClient(token=settings.github_token) as github_client:
+            result = sync_updated_github_issues(
+                session,
+                owner=settings.github_owner,
+                repository=settings.github_repository,
+                github_client=github_client,
+                overlap_seconds=settings.github_sync_overlap_seconds,
+            )
+
+        if not result.completed:
+            raise RuntimeError("GitHub synchronization did not complete.")
+
+        return {
+            "status": "completed",
+            "repository_id": result.repository_id,
+            "issues_persisted": result.issue_count,
+            "persisted_at": result.persisted_at.isoformat(),
+        }
+
+    except HTTPException:
+        raise
+    except (
+        GitHubAPIError,
+        StaleCheckpointError,
+        SQLAlchemyError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
+        logging.getLogger("inciflow.github_sync_api").exception(
+            "GitHub synchronization failed."
+        )
+
+        if session is not None:
+            try:
+                session.rollback()
+            except SQLAlchemyError:
+                logging.getLogger("inciflow.github_sync_api").exception(
+                    "Failed to roll back the GitHub sync transaction."
+                )
+
+        if session is not None:
+            session.close()
+            session = None
+
+        failure_session = None
+        try:
+            failure_session = get_session_factory()()
+            with failure_session.begin():
+                full_name = (
+                    f"{settings.github_owner}/{settings.github_repository}"
+                )
+                repository_record = get_repository_by_full_name(
+                    failure_session, full_name
+                )
+
+                if repository_record is not None:
+                    mark_github_repository_sync_failed(
+                        failure_session,
+                        github_repository_id=repository_record.github_repo_id,
+                        error_message=(
+                            f"{type(exc).__name__}: "
+                            "GitHub synchronization failed."
+                        ),
+                        started_at=started_at,
+                    )
+        except (SQLAlchemyError, RuntimeError, ValueError):
+            logging.getLogger("inciflow.github_sync_api").exception(
+                "Could not persist the GitHub sync failure state."
+            )
+        finally:
+            if failure_session is not None:
+                failure_session.close()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="GitHub synchronization failed. Check server logs.",
+        ) from exc
+    finally:
+        if session is not None:
+            session.close()

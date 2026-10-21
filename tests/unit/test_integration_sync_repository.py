@@ -1,5 +1,7 @@
-﻿"""Unit tests for integration synchronization persistence."""
+﻿
+"""Unit tests for integration synchronization persistence."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -46,6 +48,7 @@ def test_existing_sync_record_is_looked_up_after_conflict():
 
     assert result is expected_sync
     assert session.scalar.call_count == 2
+
     lookup = session.scalar.call_args.args[0]
     sql = str(lookup.compile(dialect=postgresql.dialect()))
 
@@ -126,6 +129,7 @@ def test_lock_github_repository_sync_raises_when_locked_row_is_missing():
         lock_github_repository_sync(session, github_repository_id=12345)
 
     assert session.scalar.call_count == 2
+
     lock_statement = session.scalar.call_args.args[0]
     sql = str(lock_statement.compile(dialect=postgresql.dialect()))
 
@@ -157,4 +161,55 @@ def test_lock_github_repository_sync_returns_locked_row():
 
     assert "FOR UPDATE" in sql
     assert "populate_existing" in str(lock_statement._execution_options)
+    session.commit.assert_not_called()
+
+
+def test_failure_state_update_does_not_commit_transaction():
+    from inciflow.persistence.repositories.integration_syncs import (
+        mark_github_repository_sync_failed,
+    )
+
+    session = MagicMock()
+    sync = MagicMock()
+    sync.last_synced_at = None
+    session.scalar.return_value = sync
+
+    result = mark_github_repository_sync_failed(
+        session,
+        github_repository_id=12345,
+        error_message="GitHub API request failed.",
+        started_at=datetime.now(timezone.utc),
+    )
+
+    assert result is sync
+    assert sync.status == "failed"
+    assert sync.last_error == "GitHub API request failed."
+    session.commit.assert_not_called()
+
+
+def test_stale_failure_does_not_overwrite_newer_success():
+    failure_started_at = datetime.now(timezone.utc)
+    newer_success_at = failure_started_at + timedelta(seconds=5)
+
+    from inciflow.persistence.repositories.integration_syncs import (
+        mark_github_repository_sync_failed,
+    )
+
+    session = MagicMock()
+    sync = MagicMock()
+    sync.status = "synced"
+    sync.last_synced_at = newer_success_at
+    sync.last_error = None
+    session.scalar.return_value = sync
+
+    result = mark_github_repository_sync_failed(
+        session,
+        github_repository_id=12345,
+        error_message="An older request failed.",
+        started_at=failure_started_at,
+    )
+
+    assert result is sync
+    assert sync.status == "synced"
+    assert sync.last_error is None
     session.commit.assert_not_called()
