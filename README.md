@@ -283,47 +283,6 @@ This approach helps reduce the risk of incorrect classification, unsupported roo
 
 ---
 
-# 📊 Evaluation & Success Metrics
-
-Inciflow should be evaluated against a documented manual-triage baseline.
-
-| Metric | Purpose |
-|---|---|
-| Median time to initial triage | Measure triage efficiency |
-| Classification accuracy | Compare AI classifications with reviewed labels |
-| Priority agreement | Measure agreement with human decisions |
-| Human correction rate | Identify recommendations requiring edits |
-| Rejection rate | Assess recommendation quality |
-| Evidence coverage | Measure the presence of useful evidence references |
-| Workflow completion rate | Track successful processing |
-| Action verification rate | Confirm that approved actions reached the intended state |
-
-### Initial Evaluation Goals
-
-- **500+ issues:** Proposed test-set scale.
-- **30% lower triage time:** Proposed improvement target.
-
-These figures are goals, not achieved results unless verified by a repeatable benchmark. Actual outcomes should include the baseline, sample size, and measurement method.
-
----
-
-# 🛡️ Reliability & Security
-
-Inciflow should handle failures explicitly rather than assuming that every workflow step succeeds.
-
-- Validate incoming issue data.
-- Deduplicate repeated events.
-- Validate LLM responses against an expected schema.
-- Apply bounded retries for transient API failures.
-- Route uncertain or malformed outputs for human review.
-- Record failed GitHub actions instead of marking them successful.
-- Treat issue descriptions and comments as untrusted input.
-- Restrict GitHub credentials to the required permissions.
-- Store secrets in n8n credentials or an appropriate secrets manager.
-- Never commit API keys, access tokens, or private credentials.
-
----
-
 # ⚙️ Getting Started
 
 ## Prerequisites
@@ -404,26 +363,6 @@ Inciflow/
 ```
 
 *This is a suggested structure. Keep only files and directories that exist in the actual repository.*
-
----
-
-# 🧪 Testing Scenarios
-
-A robust evaluation should include:
-
-- A complete bug report.
-- A feature request without labels.
-- An incomplete or ambiguous issue.
-- A duplicate webhook event.
-- A malformed LLM response.
-- Conflicting evidence.
-- A high-impact issue requiring escalation.
-- An edited or rejected recommendation.
-- A GitHub API rate limit or failure.
-- A human-review timeout.
-- Untrusted instructions embedded in an issue description.
-
-These scenarios help test both the AI's recommendation quality and the reliability of the surrounding workflow.
 
 ---
 
